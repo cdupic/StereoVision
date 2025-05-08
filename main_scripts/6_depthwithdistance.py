@@ -69,6 +69,7 @@ def onMouse(event, x, y, flag, disparity_normalized):
         print("Distance in centimeters {}".format(distance))
         return distance
 
+# TODO : modifier ici la detection
 #Distance to person through object detection
 def objectDetection(item):
     item_class = item.ClassID
@@ -81,6 +82,7 @@ def objectDetection(item):
     if item_class == 1:
         print("Person is: {}cm away".format(distance))
 
+# TODO : importer yolo
 #Object Detection model 
 net = jetson.inference.detectNet("ssd-mobilenet-v2", threshold=0.5)
 

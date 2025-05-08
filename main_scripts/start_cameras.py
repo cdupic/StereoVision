@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import threading
 
+# TODO : voir comment on peut lier ça avec le flux rasberry
 class Start_Cameras:
 
     def __init__(self, sensor_id):
