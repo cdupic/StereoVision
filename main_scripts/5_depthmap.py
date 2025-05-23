@@ -19,19 +19,19 @@ SPWS = 100
 
 def load_map_settings(file):
     global SWS, PFS, PFC, MDS, NOD, TTH, UR, SR, SPWS, loading_settings, sbm
-    print('Loading parameters from file...')
-    f = open(file, 'r')
-    data = json.load(f)
-    #loading data from the json file and assigning it to the Variables
-    SWS = data['SADWindowSize']
-    PFS = data['preFilterSize']
-    PFC = data['preFilterCap']
-    MDS = data['minDisparity']
-    NOD = data['numberOfDisparities']
-    TTH = data['textureThreshold']
-    UR = data['uniquenessRatio']
-    SR = data['speckleRange']
-    SPWS = data['speckleWindowSize']
+    # print('Loading parameters from file...')
+    # f = open(file, 'r')
+    # data = json.load(f)
+    # #loading data from the json file and assigning it to the Variables
+    # SWS = data['SADWindowSize']
+    # PFS = data['preFilterSize']
+    # PFC = data['preFilterCap']
+    # MDS = data['minDisparity']
+    # NOD = data['numberOfDisparities']
+    # TTH = data['textureThreshold']
+    # UR = data['uniquenessRatio']
+    # SR = data['speckleRange']
+    # SPWS = data['speckleWindowSize']
     
     #changing the actual values of the variables
     sbm = cv2.StereoBM_create(numDisparities=16, blockSize=SWS) 
@@ -44,7 +44,7 @@ def load_map_settings(file):
     sbm.setUniquenessRatio(UR)
     sbm.setSpeckleRange(SR)
     sbm.setSpeckleWindowSize(SPWS)
-    f.close()
+    #f.close()
     print('Parameters loaded from file ' + file)
 
 def stereo_depth_map(rectified_pair):
@@ -66,8 +66,12 @@ def onMouse(event, x, y, flag, disparity_normalized):
 
 
 if __name__ == "__main__":
-    left_camera = Start_Cameras(0).start()
-    right_camera = Start_Cameras(1).start()
+    left_video_path = "output/video/test2/left.avi"
+    right_video_path = "output/video/test2/right.avi"
+
+    left_camera = cv2.VideoCapture(left_video_path)
+    right_camera = cv2.VideoCapture(right_video_path)
+
     load_map_settings("../3dmap_set.txt")
 
     cv2.namedWindow("DepthMap")
