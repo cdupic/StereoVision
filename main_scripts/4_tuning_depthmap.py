@@ -53,6 +53,7 @@ def stereo_depth_map(rectified_pair, variable_mapping):
     disparity_color = cv2.applyColorMap(image, cv2.COLORMAP_JET)
     return disparity_color, disparity_normalized
 
+
 def save_load_map_settings(current_save, current_load, variable_mapping):
     global loading
     if current_save != 0:
@@ -95,6 +96,7 @@ def save_load_map_settings(current_save, current_load, variable_mapping):
         else: 
             print ("File to load from doesn't exist.")
 
+
 def activateTrackbars(x):
     global loading
     loading = False
@@ -116,6 +118,7 @@ def create_trackbars() :
     cv2.createTrackbar("PreFiltSize", "Stereo", 5, 255, activateTrackbars)
     cv2.createTrackbar("Save Settings", "Stereo", 0, 1, activateTrackbars)
     cv2.createTrackbar("Load Settings","Stereo", 0, 1, activateTrackbars)
+
 
 def onMouse(event, x, y, flag, disparity_normalized):
     if event == cv2.EVENT_LBUTTONDOWN:

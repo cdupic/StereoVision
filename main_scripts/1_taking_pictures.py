@@ -7,7 +7,7 @@ import os
 from os import path
 
 #Photo Taking presets
-total_photos = 10  # Number of images to take
+total_photos = 30  # Number of images to take
 countdown = 5  # Interval for count-down timer, seconds
 font = cv2.FONT_HERSHEY_SIMPLEX  # Cowntdown timer font
 

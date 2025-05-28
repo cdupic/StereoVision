@@ -1,93 +1,74 @@
+import os
 import cv2
 import numpy as np
-import glob
+import json
+from stereovision.calibration import StereoCalibrator
+from stereovision.calibration import StereoCalibration
+from stereovision.exceptions import ChessboardNotFoundError
 
-import os
+# Global variables preset
+total_photos = 30
 
-# Vérifier et créer le répertoire si nécessaire
-output_dir = '../calib_result/'
-os.makedirs(output_dir, exist_ok=True)
+# Chessboard parameters
+# Must use 6 Rows and 9 Column chessboard
+rows = 6
+columns = 9
+square_size = 2.5
 
+image_size = (640, 360)
 
-# Paramètres de l'échiquier
-rows = 6  # Nombre de coins internes dans les lignes
-columns = 9  # Nombre de coins internes dans les colonnes
-square_size = 2.5  # Taille d'une case en cm
+#This is the calibraation class from the StereoVision package
+calibrator = StereoCalibrator(rows, columns, square_size, image_size)
+photo_counter = 0
+print('Start cycle')
 
-# Préparation des points 3D de l'échiquier
-pattern_size = (columns, rows)
-objp = np.zeros((rows * columns, 3), np.float32)
-objp[:, :2] = np.mgrid[0:columns, 0:rows].T.reshape(-1, 2) * square_size
+#While loop for the calibration. It will go through each pair of image one by one
+while photo_counter != total_photos:
+    photo_counter += 1
+    print('Importing pair: ' + str(photo_counter))
+    leftName = '../pairs/left_' + str(photo_counter).zfill(2) + '.png'
+    rightName = '../pairs/right_' + str(photo_counter).zfill(2) + '.png'
+    if os.path.isfile(leftName) and os.path.isfile(rightName):
+        #reading the images in Color
+        imgLeft = cv2.imread(leftName, 1)
+        imgRight = cv2.imread(rightName, 1)
 
-# Listes pour stocker les points 3D et 2D
-objpoints = []  # Points 3D dans le monde réel
-imgpoints_left = []  # Points 2D dans les images de la caméra gauche
-imgpoints_right = []  # Points 2D dans les images de la caméra droite
+        #Ensuring both left and right images have the same dimensions
+        (H, W, C) = imgLeft.shape
 
-# Charger les images gauche et droite
-left_images = sorted(glob.glob('../pairs/left_*.png'))
-right_images = sorted(glob.glob('../pairs/right_*.png'))
+        imgRight = cv2.resize(imgRight, (W, H))
 
-# Détection des coins de l'échiquier
-for left_img_path, right_img_path in zip(left_images, right_images):
-    img_left = cv2.imread(left_img_path)
-    img_right = cv2.imread(right_img_path)
-    gray_left = cv2.cvtColor(img_left, cv2.COLOR_BGR2GRAY)
-    gray_right = cv2.cvtColor(img_right, cv2.COLOR_BGR2GRAY)
+        # Calibrating the camera (getting the corners and drawing them)
+        try:
+            calibrator._get_corners(imgLeft)
+            calibrator._get_corners(imgRight)
+        except ChessboardNotFoundError as error:
+            print(error)
+            print("Pair No " + str(photo_counter) + " ignored")
+        else:
+            #add_corners function from the Class already helps us with cv2.imshow,
+            #and hence we don't need to do it seperately
+            calibrator.add_corners((imgLeft, imgRight), False)
 
-    ret_left, corners_left = cv2.findChessboardCorners(gray_left, pattern_size)
-    ret_right, corners_right = cv2.findChessboardCorners(gray_right, pattern_size)
-
-    if ret_left and ret_right:
-        objpoints.append(objp)
-        corners_left = cv2.cornerSubPix(
-            gray_left, corners_left, (11, 11), (-1, -1),
-            (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.01)
-        )
-        corners_right = cv2.cornerSubPix(
-            gray_right, corners_right, (11, 11), (-1, -1),
-            (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.01)
-        )
-        imgpoints_left.append(corners_left)
-        imgpoints_right.append(corners_right)
-
-# Calibration des caméras
-ret_left, mtx_left, dist_left, rvecs_left, tvecs_left = cv2.calibrateCamera(
-    objpoints, imgpoints_left, gray_left.shape[::-1], None, None
-)
-ret_right, mtx_right, dist_right, rvecs_right, tvecs_right = cv2.calibrateCamera(
-    objpoints, imgpoints_right, gray_right.shape[::-1], None, None
-)
-
-# Calibration stéréo
-criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 1e-5)
-flags = (cv2.CALIB_FIX_INTRINSIC)
-ret, mtx_left, dist_left, mtx_right, dist_right, R, T, E, F = cv2.stereoCalibrate(
-    objpoints, imgpoints_left, imgpoints_right,
-    mtx_left, dist_left, mtx_right, dist_right,
-    gray_left.shape[::-1], criteria=criteria, flags=flags
-)
-
-# Rectification
-R1, R2, P1, P2, Q, roi1, roi2 = cv2.stereoRectify(
-    mtx_left, dist_left, mtx_right, dist_right,
-    gray_left.shape[::-1], R, T, flags=0
-)
-
-# Sauvegarde des résultats
-np.savez(os.path.join(output_dir, 'stereo_calib.npz'),
-         mtx_left=mtx_left, dist_left=dist_left,
-         mtx_right=mtx_right, dist_right=dist_right,
-         R=R, T=T, E=E, F=F, R1=R1, R2=R2, P1=P1, P2=P2, Q=Q)
-
-print("Calibration terminée et résultats sauvegardés.")
+    else:
+        print ("Pair not found")
+        continue
 
 
-import numpy as np
+print('Cycle Complete!')
 
-# Charger le fichier .npz
-data = np.load('../calib_result/stereo_calib.npz')
+print('Starting calibration... It can take several minutes!')
+calibration = calibrator.calibrate_cameras()
+calibration.export('../calib_result')
+print('Calibration complete!')
 
-# Accéder aux données
-print(data.files)  # Liste des noms des tableaux dans le fichier
-print(data['mtx_left'])  # Accéder à un tableau spécifique
+# Lets rectify and show last pair after  calibration
+calibration = StereoCalibration(input_folder='calib_result')
+rectified_pair = calibration.rectify((imgLeft, imgRight))
+
+cv2.imshow('Left Calibrated!', rectified_pair[0])
+cv2.imshow('Right Calibrated!', rectified_pair[1])
+#why save as jpg here and not png?
+cv2.imwrite("../rectified_left.jpg", rectified_pair[0])
+cv2.imwrite("../rectified_right.jpg", rectified_pair[1])
+cv2.waitKey(0)
