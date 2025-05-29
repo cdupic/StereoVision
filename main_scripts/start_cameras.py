@@ -5,21 +5,25 @@ import threading
 class Start_Cameras:
 
     def __init__(self, sensor_id):
-        # Initialize instance variables
-        # OpenCV video capture element
         self.video_capture = None
-        # The last captured image from the camera
         self.frame = None
         self.grabbed = False
-        # The thread where the video capture runs
         self.read_thread = None
         self.read_lock = threading.Lock()
         self.running = False
-
         self.sensor_id = sensor_id
 
-        gstreamer_pipeline_string = self.gstreamer_pipeline()
-        self.open(gstreamer_pipeline_string)
+        # Remplace pipeline GStreamer par simple OpenCV
+        self.video_capture = cv2.VideoCapture(self.sensor_id)
+        if not self.video_capture.isOpened():
+            print(f"❌ Failed to open camera {self.sensor_id}")
+            return
+
+        self.grabbed, self.frame = self.video_capture.read()
+        print(f"✅ Camera {self.sensor_id} initialized.")
+
+    def set(self, prop_id, value):
+        self.video_capture.set(prop_id, value)
 
     #Opening the cameras
     def open(self, gstreamer_pipeline_string):
@@ -67,10 +71,9 @@ class Start_Cameras:
                 print("Could not read image from camera")
 
     def read(self):
-        with self.read_lock:
-            frame = self.frame.copy()
-            grabbed = self.grabbed
-        return grabbed, frame
+        if self.frame is None:
+            return False, None
+        return True, self.frame.copy()
 
     def release(self):
         if self.video_capture != None:
@@ -115,8 +118,9 @@ class Start_Cameras:
 
 #This is the main. Read this first. 
 if __name__ == "__main__":
-    left_camera = Start_Cameras(0).start()
-    right_camera = Start_Cameras(1).start()
+    left_camera = cv2.VideoCapture(0)
+    right_camera = cv2.VideoCapture(1)
+
 
     while True:
         left_grabbed, left_frame = left_camera.read()
@@ -132,8 +136,6 @@ if __name__ == "__main__":
         else:
             break
 
-    left_camera.stop()
     left_camera.release()
-    right_camera.stop()
     right_camera.release()
     cv2.destroyAllWindows()

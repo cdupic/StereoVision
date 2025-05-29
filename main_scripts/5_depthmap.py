@@ -1,40 +1,43 @@
 import cv2
 import numpy as np
+import os
 import json
-from stereovision.calibration import StereoCalibration
 from start_cameras import Start_Cameras
 
-
-# Depth map default preset
-SWS = 5
+# Paramètres par défaut
+SWS = 15
 PFS = 5
 PFC = 29
-MDS = -30
-NOD = 160
+MDS = 0
+NOD = 96
 TTH = 100
 UR = 10
 SR = 14
 SPWS = 100
-
+sbm = None  # StereoBM sera initialisé après chargement
 
 def load_map_settings(file):
-    global SWS, PFS, PFC, MDS, NOD, TTH, UR, SR, SPWS, loading_settings, sbm
-    print('Loading parameters from file...')
-    f = open(file, 'r')
-    data = json.load(f)
-    #loading data from the json file and assigning it to the Variables
-    SWS = data['SADWindowSize']
-    PFS = data['preFilterSize']
-    PFC = data['preFilterCap']
-    MDS = data['minDisparity']
-    NOD = data['numberOfDisparities']
-    TTH = data['textureThreshold']
-    UR = data['uniquenessRatio']
-    SR = data['speckleRange']
-    SPWS = data['speckleWindowSize']
-    
-    #changing the actual values of the variables
-    sbm = cv2.StereoBM_create(numDisparities=16, blockSize=SWS) 
+    global SWS, PFS, PFC, MDS, NOD, TTH, UR, SR, SPWS, sbm
+    if not os.path.isfile(file):
+        print(f"⚠️ Settings file not found: {file}")
+        print("🛠️ Using default parameters.")
+    else:
+        print('📥 Loading parameters from file...')
+        with open(file, 'r') as f:
+            data = json.load(f)
+            SWS = data['SADWindowSize']
+            PFS = data['preFilterSize']
+            PFC = data['preFilterCap']
+            MDS = data['minDisparity']
+            NOD = data['numberOfDisparities']
+            TTH = data['textureThreshold']
+            UR = data['uniquenessRatio']
+            SR = data['speckleRange']
+            SPWS = data['speckleWindowSize']
+        print('✅ Parameters loaded.')
+
+    # Initialisation du StereoBM
+    sbm = cv2.StereoBM_create(numDisparities=NOD, blockSize=SWS)
     sbm.setPreFilterType(1)
     sbm.setPreFilterSize(PFS)
     sbm.setPreFilterCap(PFC)
@@ -44,72 +47,58 @@ def load_map_settings(file):
     sbm.setUniquenessRatio(UR)
     sbm.setSpeckleRange(SR)
     sbm.setSpeckleWindowSize(SPWS)
-    f.close()
-    print('Parameters loaded from file ' + file)
 
-def stereo_depth_map(rectified_pair):
-    #blockSize is the SAD Window Size
-
-    dmLeft = rectified_pair[0]
-    dmRight = rectified_pair[1]
-    disparity = sbm.compute(dmLeft, dmRight)
+def stereo_depth_map(left_gray, right_gray):
+    left = cv2.GaussianBlur(left_gray, (5, 5), 0)
+    right = cv2.GaussianBlur(right_gray, (5, 5), 0)
+    disparity = sbm.compute(left, right)
     disparity_normalized = cv2.normalize(disparity, None, 0, 255, cv2.NORM_MINMAX)
-    image = np.array(disparity_normalized, dtype = np.uint8)
-    disparity_color = cv2.applyColorMap(image, cv2.COLORMAP_JET)
+    disparity_filtered = cv2.medianBlur(np.uint8(disparity_normalized), 5)
+    disparity_color = cv2.applyColorMap(disparity_filtered, cv2.COLORMAP_TURBO)
     return disparity_color, disparity_normalized
 
-def onMouse(event, x, y, flag, disparity_normalized):
+def onMouse(event, x, y, flags, disparity_normalized):
     if event == cv2.EVENT_LBUTTONDOWN:
-        distance = disparity_normalized[y][x]
-        print("Distance in centimeters {}".format(distance))
-        return distance
-
+        value = disparity_normalized[y][x]
+        if value > 0:
+            print(f"📏 Disparity at ({x}, {y}): {value:.2f}")
+        else:
+            print(f"📏 Invalid disparity at ({x}, {y})")
 
 if __name__ == "__main__":
-    left_camera = Start_Cameras(0).start()
-    right_camera = Start_Cameras(1).start()
+    # Utiliser 1 seule caméra
+    cam = Start_Cameras(0).start()
+
+    # Charger les paramètres
     load_map_settings("../3dmap_set.txt")
 
     cv2.namedWindow("DepthMap")
 
     while True:
-        left_grabbed, left_frame = left_camera.read()
-        right_grabbed, right_frame = right_camera.read()
+        grabbed, frame = cam.read()
+        if not grabbed:
+            continue
 
-        if left_grabbed and right_grabbed:  
-            #Convert BGR to Grayscale     
-            left_gray_frame = cv2.cvtColor(left_frame, cv2.COLOR_BGR2GRAY)
-            right_gray_frame = cv2.cvtColor(right_frame, cv2.COLOR_BGR2GRAY)
+        left_frame = frame.copy()
+        right_frame = np.roll(frame, 5, axis=1)  # simulation d'une seconde caméra décalée
 
-            #calling all calibration results
-            calibration = StereoCalibration(input_folder='../calib_result')
-            rectified_pair = calibration.rectify((left_gray_frame, right_gray_frame))
-            disparity_color, disparity_normalized = stereo_depth_map(rectified_pair)
+        left_gray = cv2.cvtColor(left_frame, cv2.COLOR_BGR2GRAY)
+        right_gray = cv2.cvtColor(right_frame, cv2.COLOR_BGR2GRAY)
 
-            #Mouse clicked function
-            cv2.setMouseCallback("DepthMap", onMouse, disparity_normalized)
+        disparity_color, disparity_normalized = stereo_depth_map(left_gray, right_gray)
 
-            #Show depth map and image frames
-            output = cv2.addWeighted(left_frame, 0.5, disparity_color, 0.5, 0.0)
-            cv2.imshow("DepthMap", np.hstack((disparity_color, output)))
-            
-            cv2.imshow("Frames", np.hstack((left_frame, right_frame)))
+        if disparity_color.shape[:2] != left_frame.shape[:2]:
+            disparity_color = cv2.resize(disparity_color, (left_frame.shape[1], left_frame.shape[0]))
 
-            k = cv2.waitKey(1) & 0xFF
-            if k == ord('q'):
-                break
+        output = cv2.addWeighted(left_frame, 0.5, disparity_color, 0.5, 0.0)
 
-            else:
-                continue
+        cv2.setMouseCallback("DepthMap", onMouse, disparity_normalized)
+        cv2.imshow("DepthMap", np.hstack((disparity_color, output)))
+        cv2.imshow("Frames", np.hstack((left_frame, right_frame)))
 
-    left_camera.stop()
-    left_camera.release()
-    right_camera.stop()
-    right_camera.release()
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cam.stop()
+    cam.release()
     cv2.destroyAllWindows()
-                
-
-
-    
-
-

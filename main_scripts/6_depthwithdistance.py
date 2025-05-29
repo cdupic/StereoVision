@@ -1,44 +1,39 @@
-#Determine the distance to people using the SSD Mobilenet model
 import cv2
 import numpy as np
+import torch
+import os
 import json
-from stereovision.calibration import StereoCalibration
 from start_cameras import Start_Cameras
-import jetson.inference
-import jetson.utils
 
-# Depth map default preset
-SWS = 5
-PFS = 5
-PFC = 29
-MDS = -30
-NOD = 160
-TTH = 100
-UR = 10
-SR = 14
-SPWS = 100
+# Globals
+sbm = None
+disparity_normalized = None
 
-#Distance preset
-distance = 0
+# Load YOLOv5 model (CPU)
+model = torch.hub.load('ultralytics/yolov5', 'yolov5s', device='cpu')
+model.conf = 0.5  # detection threshold
 
 def load_map_settings(file):
-    global SWS, PFS, PFC, MDS, NOD, TTH, UR, SR, SPWS, loading_settings, sbm
-    print('Loading parameters from file...')
-    f = open(file, 'r')
-    data = json.load(f)
-    #loading data from the json file and assigning it to the Variables
-    SWS = data['SADWindowSize']
-    PFS = data['preFilterSize']
-    PFC = data['preFilterCap']
-    MDS = data['minDisparity']
-    NOD = data['numberOfDisparities']
-    TTH = data['textureThreshold']
-    UR = data['uniquenessRatio']
-    SR = data['speckleRange']
-    SPWS = data['speckleWindowSize']
-    
-    #changing the actual values of the variables
-    sbm = cv2.StereoBM_create(numDisparities=16, blockSize=SWS) 
+    global sbm
+    if not os.path.isfile(file):
+        print("⚠️ No settings file found, using defaults.")
+        SWS, PFS, PFC = 15, 5, 31
+        MDS, NOD = 0, 96
+        TTH, UR, SR, SPWS = 100, 10, 15, 100
+    else:
+        with open(file, 'r') as f:
+            data = json.load(f)
+        SWS = data['SADWindowSize']
+        PFS = data['preFilterSize']
+        PFC = data['preFilterCap']
+        MDS = data['minDisparity']
+        NOD = data['numberOfDisparities']
+        TTH = data['textureThreshold']
+        UR = data['uniquenessRatio']
+        SR = data['speckleRange']
+        SPWS = data['speckleWindowSize']
+
+    sbm = cv2.StereoBM_create(numDisparities=NOD, blockSize=SWS)
     sbm.setPreFilterType(1)
     sbm.setPreFilterSize(PFS)
     sbm.setPreFilterCap(PFC)
@@ -48,100 +43,68 @@ def load_map_settings(file):
     sbm.setUniquenessRatio(UR)
     sbm.setSpeckleRange(SR)
     sbm.setSpeckleWindowSize(SPWS)
-    f.close()
-    print('Parameters loaded from file ' + file)
 
-def stereo_depth_map(rectified_pair):
-    #blockSize is the SAD Window Size
-
-    dmLeft = rectified_pair[0]
-    dmRight = rectified_pair[1]
-    disparity = sbm.compute(dmLeft, dmRight)
+def stereo_depth_map(left, right):
+    global disparity_normalized
+    left = cv2.GaussianBlur(left, (5, 5), 0)
+    right = cv2.GaussianBlur(right, (5, 5), 0)
+    disparity = sbm.compute(left, right)
     disparity_normalized = cv2.normalize(disparity, None, 0, 255, cv2.NORM_MINMAX)
-    image = np.array(disparity_normalized, dtype = np.uint8)
-    disparity_color = cv2.applyColorMap(image, cv2.COLORMAP_JET)
-    return disparity_color, disparity_normalized
+    disparity_filtered = cv2.medianBlur(np.uint8(disparity_normalized), 5)
+    disparity_color = cv2.applyColorMap(disparity_filtered, cv2.COLORMAP_TURBO)
+    return disparity_color
 
-#Determine distance to pixel by clicking mouse
-def onMouse(event, x, y, flag, disparity_normalized):
-    if event == cv2.EVENT_LBUTTONDOWN:
-        distance = disparity_normalized[y][x]
-        print("Distance in centimeters {}".format(distance))
-        return distance
-
-#Distance to person through object detection
-def objectDetection(item):
-    item_class = item.ClassID
-    item_coords = item.Center
-    x_coord = int(item_coords[0])
-    y_coord = int(item_coords[1])
-    distance = disparity_normalized[y_coord][x_coord]
-
-    #to avoid detection of different objects, we only focus on people which have a ClassID of 1
-    if item_class == 1:
-        print("Person is: {}cm away".format(distance))
-
-#Object Detection model 
-net = jetson.inference.detectNet("ssd-mobilenet-v2", threshold=0.5)
-
-#net = jetson.inference.detectNet(argv=["--model=/home/aryan/StereoVision/SSD-Mobilenet-v2/ssd_mobilenet_v2_coco.uff",
-#"--labels=/home/aryan/StereoVision/SSD-Mobilenet-v2/ssd_coco_labels.txt", 
-#"--input-blob=Input", "--output-cvg=NMS", "--output-bbox=NMS_1"], threshold=0.5)
+def estimate_distance(x, y, size=5):
+    if disparity_normalized is None:
+        return None
+    h, w = disparity_normalized.shape
+    x1, x2 = max(0, x - size), min(w, x + size)
+    y1, y2 = max(0, y - size), min(h, y + size)
+    roi = disparity_normalized[y1:y2, x1:x2]
+    valid = roi[roi > 0]
+    return 1000 / np.median(valid) if valid.size > 0 else None
 
 
+def detect_and_annotate(frame):
+    results = model(frame)
+    for *box, conf, cls in results.xyxy[0]:
+        if int(cls) == 0:  # person
+            x1, y1, x2, y2 = map(int, box)
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            dist = estimate_distance(cx, cy)
+            label = f"Person {dist:.1f} cm" if dist else "Person ???"
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(frame, label, (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+    return frame
 
 if __name__ == "__main__":
-    left_camera = Start_Cameras(0).start()
-    right_camera = Start_Cameras(1).start()
+    cam = Start_Cameras(0).start()
     load_map_settings("../3dmap_set.txt")
-
     cv2.namedWindow("DepthMap")
 
     while True:
-        left_grabbed, left_frame = left_camera.read()
-        right_grabbed, right_frame = right_camera.read()
+        grabbed, frame = cam.read()
+        if not grabbed:
+            continue
 
-        if left_grabbed and right_grabbed:  
-            #Convert BGR to Grayscale     
-            left_gray_frame = cv2.cvtColor(left_frame, cv2.COLOR_BGR2GRAY)
-            right_gray_frame = cv2.cvtColor(right_frame, cv2.COLOR_BGR2GRAY)
+        # Simule deux vues : image originale + décalée
+        left_frame = frame.copy()
+        right_frame = np.roll(frame, 5, axis=1)  # simulate right view
 
-            #calling all calibration results
-            calibration = StereoCalibration(input_folder='calib_result')
-            rectified_pair = calibration.rectify((left_gray_frame, right_gray_frame))
-            disparity_color, disparity_normalized = stereo_depth_map(rectified_pair)
+        left_gray = cv2.cvtColor(left_frame, cv2.COLOR_BGR2GRAY)
+        right_gray = cv2.cvtColor(right_frame, cv2.COLOR_BGR2GRAY)
 
-            #Mouse clicked function
-            cv2.setMouseCallback("DepthMap", onMouse, disparity_normalized)
-           
-            #Object detection & distance
-            left_cuda_frame = jetson.utils.cudaFromNumpy(left_frame)
-            detections = net.Detect(left_cuda_frame)
-            if len(detections):
-                for item in detections:
-                    objectDetection(item)
+        disparity_color = stereo_depth_map(left_gray, right_gray)
+        annotated = detect_and_annotate(left_frame.copy())
+        overlay = cv2.addWeighted(left_frame, 0.5, disparity_color, 0.5, 0.0)
 
+        cv2.imshow("DepthMap", np.hstack((disparity_color, overlay)))
+        cv2.imshow("Detections", annotated)
 
-            
-            left_stacked = cv2.addWeighted(left_frame, 0.5, disparity_color, 0.5, 0.0)
-            cv2.imshow("DepthMap", np.hstack((disparity_color, left_stacked)))
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
-
-            k = cv2.waitKey(1) & 0xFF
-            if k == ord('q'):
-                break
-
-            else:
-                continue
-
-    left_camera.stop()
-    left_camera.release()
-    right_camera.stop()
-    right_camera.release()
+    cam.stop()
+    cam.release()
     cv2.destroyAllWindows()
-                
-
-
-    
-
-
